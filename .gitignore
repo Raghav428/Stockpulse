@@ -9,3 +9,4 @@ wheels/
 # Virtual environments
 .venv
 .env
+docker_setup.txt
