@@ -26,7 +26,7 @@ stockpulse/
 ├── migrations/                     # 🌊 Alembic generated files & versions
 ├── pyproject.toml                  # 📦 Dependencies metadata
 ├── uv.lock                         # 🔒 Dependency versions
-└── docker_setup.txt                # Developer notes for running Docker commands
+└── setup_manual.txt                # Developer notes for running Docker commands
 ```
 
 ## 2. CORE PYTHON APPLICATION FILES (app/)
@@ -47,26 +47,33 @@ async def stock(symbol : str = Path(min_length=1, max_length=5, pattern= r"^[A-Z
         "symbol" : symbol,
         "price" : 3*int(len(symbol)) + 2,
         "date_listed" : "23/01/2003"
+
     }
 ```
 
 ### File: `app/core/database.py`
 ```python
+#from dotenv import load_dotenv # Not needed with Docker Compose
 import os
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
+#load_dotenv() #Unnecessary(Docker Compose injects .env vars into the environment)
+
 
 pg_password = os.getenv("POSTGRES_PASSWORD")
 if pg_password:
     DATABASE_URL = f"postgresql+asyncpg://postgres:{pg_password}@my_postgres:5432/stockpulse"
+
 else:
     raise RuntimeError("POSTGRES_PASSWORD environment variable not set")
 
 ALEMBIC_DATABASE_URL = f"postgresql://postgres:{pg_password}@my_postgres:5432/stockpulse"   
 
 engine = create_async_engine(DATABASE_URL)
+
+
 ```
 
 ### File: `app/models/models.py`
@@ -74,6 +81,8 @@ engine = create_async_engine(DATABASE_URL)
 from app.core.database import Base
 from sqlalchemy import Column, String, Integer, DateTime
 from sqlalchemy.sql import func
+
+
 
 class User(Base):
     __tablename__ = "Users"
@@ -86,6 +95,7 @@ class User(Base):
 ### File: `app/schemas/schema.py`
 ```python
 from pydantic import BaseModel, Field
+
 
 class Stock(BaseModel):
     symbol : str = Field(min_length=1, max_length=5)
@@ -112,17 +122,20 @@ CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8
 
 ### File: `compose.yml`
 ```yaml
+#######>>>>>>compose.yml<<<<<<######
+
 services:
 
+
 #>>>>>>>>>>>PostgreSQL<<<<<<<<<<<<#
-  my_postgres:        
-    image: postgres   
-    environment:      
+  my_postgres:        # this is --name
+    image: postgres   # this is the image
+    environment:      # this is -e
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: stockpulse
-    ports:            
+    ports:            # this is -p
       - "5432:5432"
-    volumes:          
+    volumes:          # this is -v
       - pgdata:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
@@ -130,11 +143,14 @@ services:
       timeout: 5s
       retries: 5
 
+
 #>>>>>>>>>>>>Redis<<<<<<<<<<<<#
   my_redis:
     image: redis
     ports:
       - "6379:6379"
+
+
 
 #>>>>>>>>>>>>>FastAPI<<<<<<<<<<<<#
   fastapi:
@@ -143,15 +159,14 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - .:/app
-      - /app/.venv 
+      - /app/.venv # <--- This tells Docker to use the container's .venv, NOT your local one!
     ports:
       - "8000:8000"
     depends_on:
       my_postgres:
         condition: service_healthy
-
 volumes:
-  pgdata:
+  pgdata:             # declares the named volume
 ```
 
 ### File: `.vscode/settings.json`
