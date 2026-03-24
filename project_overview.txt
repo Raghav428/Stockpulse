@@ -1,10 +1,10 @@
 # STOCKPULSE - PROJECT OVERVIEW & SOURCE CODE
 
-This document contains the complete folder structure and the primary source code files comprising the Stockpulse application as of our recent restructuring. It serves as a single source of truth for the codebase.
+This document contains the complete folder structure and the primary source code files comprising the Stockpulse application. It serves as a single source of truth for the codebase, providing optimal context for LLMs and developers.
 
-================================================================================
-# 1. DIRECTORY STRUCTURE
-================================================================================
+## 1. DIRECTORY STRUCTURE
+
+```text
 stockpulse/
 ├── .env                            # Secret environment variables (e.g. POSTGRES_PASSWORD)
 ├── .vscode/
@@ -25,15 +25,14 @@ stockpulse/
 ├── alembic.ini                     # 📐 Alembic migration config
 ├── migrations/                     # 🌊 Alembic generated files & versions
 ├── pyproject.toml                  # 📦 Dependencies metadata
-└── uv.lock                         # 🔒 Dependency versions
+├── uv.lock                         # 🔒 Dependency versions
 └── docker_setup.txt                # Developer notes for running Docker commands
+```
 
+## 2. CORE PYTHON APPLICATION FILES (app/)
 
-================================================================================
-# 2. CORE PYTHON APPLICATION FILES (app/)
-================================================================================
-
-### -> app/main.py
+### File: `app/main.py`
+```python
 from fastapi import FastAPI, Path
 
 app = FastAPI()
@@ -49,9 +48,10 @@ async def stock(symbol : str = Path(min_length=1, max_length=5, pattern= r"^[A-Z
         "price" : 3*int(len(symbol)) + 2,
         "date_listed" : "23/01/2003"
     }
+```
 
-
-### -> app/core/database.py
+### File: `app/core/database.py`
+```python
 import os
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import declarative_base
@@ -67,9 +67,10 @@ else:
 ALEMBIC_DATABASE_URL = f"postgresql://postgres:{pg_password}@my_postgres:5432/stockpulse"   
 
 engine = create_async_engine(DATABASE_URL)
+```
 
-
-### -> app/models/models.py
+### File: `app/models/models.py`
+```python
 from app.core.database import Base
 from sqlalchemy import Column, String, Integer, DateTime
 from sqlalchemy.sql import func
@@ -80,21 +81,20 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String, nullable=False, unique=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+```
 
-
-### -> app/schemas/schema.py
+### File: `app/schemas/schema.py`
+```python
 from pydantic import BaseModel, Field
 
 class Stock(BaseModel):
     symbol : str = Field(min_length=1, max_length=5)
+```
 
+## 3. CONFIGURATION & INFRASTRUCTURE FILES
 
-
-================================================================================
-# 3. CONFIGURATION & INFRASTRUCTURE FILES
-================================================================================
-
-### -> Dockerfile
+### File: `Dockerfile`
+```dockerfile
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -108,9 +108,10 @@ RUN uv sync
 COPY . .
 
 CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
 
-
-### -> compose.yml
+### File: `compose.yml`
+```yaml
 services:
 
 #>>>>>>>>>>>PostgreSQL<<<<<<<<<<<<#
@@ -151,9 +152,10 @@ services:
 
 volumes:
   pgdata:
+```
 
-
-### -> .vscode/settings.json
+### File: `.vscode/settings.json`
+```json
 {
     "files.exclude": {
         "**/__pycache__": true,
@@ -163,3 +165,4 @@ volumes:
         "**/.ruff_cache": true
     }
 }
+```
