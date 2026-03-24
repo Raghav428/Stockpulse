@@ -1,0 +1,39 @@
+#######>>>>>>compose.yml<<<<<<######
+
+services:
+
+
+#>>>>>>>>>>>PostgreSQL<<<<<<<<<<<<#
+  my_postgres:        # this is --name
+    image: postgres   # this is the image
+    environment:      # this is -e
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:            # this is -p
+      - "5432:5432"
+    volumes:          # this is -v
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+#>>>>>>>>>>>>Redis<<<<<<<<<<<<#
+  my_redis:
+    image: redis
+    ports:
+      - "6379:6379"
+
+
+
+#>>>>>>>>>>>>>FastAPI<<<<<<<<<<<<#
+  fastapi:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      my_postgres:
+        condition: service_healthy
+volumes:
+  pgdata:             # declares the named volume
