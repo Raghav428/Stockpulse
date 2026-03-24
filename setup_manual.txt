@@ -1,0 +1,51 @@
+# STOCKPULSE - DOCKER SETUP & MIGRATIONS GUIDE
+
+### THE PROBLEMS WE ENCOUNTERED:
+1. HOST VS. CONTAINER NETWORKING:
+   Running 'uv run alembic' locally failed because the terminal on your host doesn't know 
+   what 'my_postgres' is. This hostname only exists inside the Docker virtual network.
+
+2. MISSING CREDENTIALS:
+   Even though you have a '.env' file, Docker Compose by default only uses it to fill in 
+   placeholders in the 'compose.yml' file. It does NOT automatically inject those variables 
+   into your FastAPI application unless explicitly told to do so.
+
+3. DATABASE NAME MISMATCH:
+   The default Postgres image creates a database named 'postgres', but your code expects 
+   a database named 'stockpulse'.
+
+4. MISSING MIGRATION FILES:
+   Running migrations inside Docker without a 'volume' mount meant that any files generated 
+   stayed inside the container and were invisible on your computer.
+
+### THE SOLUTIONS WE IMPLEMENTED:
+1. ENVIRONMENT INJECTION:
+   Updated 'compose.yml' to pass 'POSTGRES_PASSWORD' into the 'fastapi' container.
+
+2. EXPLICIT DB INITIALIZATION:
+   Added 'POSTGRES_DB: stockpulse' to the database service to ensure the correctly named 
+   database is created on startup.
+
+3. VOLUME MOUNTING:
+   Added 'volumes: - .:/app' to the 'fastapi' service. This "links" your local folder 
+   with the container, so code changes and migrations sync instantly.
+
+4. INSIDE-OUT EXECUTION:
+   We now run all database-related commands "inside" the running container using 'docker compose exec'.
+
+### THE EXACT COMMANDS TO USE:
+
+# 1. Start everything (and rebuild if you change Dockerfile)
+docker compose up -d --build
+
+# 2. To generate a new migration after changing models.py:
+docker compose exec fastapi uv run alembic revision --autogenerate -m "description of change"
+
+# 3. To apply those migrations to the database:
+docker compose exec fastapi uv run alembic upgrade head
+
+# 4. To check the logs if things aren't working:
+docker compose logs -f fastapi
+
+# 5. To reset your database completely (WARNING: DELETES DATA):
+docker compose down -v && docker compose up -d
