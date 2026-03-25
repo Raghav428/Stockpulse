@@ -10,3 +10,4 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String, nullable=False, unique=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+    hashed_pass = Column(String, nullable=False)
