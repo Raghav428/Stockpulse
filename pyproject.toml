@@ -6,11 +6,15 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.18.4",
+    "argon2-cffi>=25.1.0",
     "asyncpg>=0.31.0",
     "dotenv>=0.9.9",
     "fastapi>=0.135.1",
     "psycopg2-binary>=2.9.11",
+    "pydantic-settings>=2.13.1",
+    "pyjwt[crypto]>=2.12.1",
     "python-dotenv>=1.2.2",
     "sqlalchemy>=2.0.48",
+    "structlog>=25.5.0",
     "uvicorn>=0.42.0",
 ]
