@@ -27,4 +27,4 @@ ALEMBIC_DATABASE_URL = f"postgresql://postgres:{pg_password}@my_postgres:5432/st
 
 engine = create_async_engine(DATABASE_URL)
 
-AsyncSessionLocal = async_sessionmaker(engine=engine, class_= AsyncSession, expire_on_commit=False)
+AsyncSessionLocal = async_sessionmaker(engine, class_= AsyncSession, expire_on_commit=False)
