@@ -2,43 +2,69 @@
 
 This document contains the complete folder structure and the primary source code files comprising the Stockpulse application. It serves as a single source of truth for the codebase, providing optimal context for LLMs and developers.
 
+Last Updated: 26 March 2026
+
 ## 1. DIRECTORY STRUCTURE
 
 ```text
 stockpulse/
 ├── .env                            # Secret environment variables (e.g. POSTGRES_PASSWORD)
+├── .gitignore                      # Ignores __pycache__, .venv, .env, docker_setup.txt
+├── .python-version                 # Python 3.12
 ├── .vscode/
 │   └── settings.json               # IDE config to hide __pycache__
 ├── app/                            # 📦 Application Code
 │   ├── __init__.py                 
-│   ├── main.py                     # 🚀 FastAPI Entry Point
-│   ├── api/                        # 🛣️ For future API Routers
+│   ├── main.py                     # 🚀 FastAPI Entry Point (lifespan, async sessions)
+│   ├── api/                        # 🛣️ For future API Routers (empty)
 │   ├── core/
-│   │   └── database.py             # 🗄️ Database Connection & Setup 
-│   ├── crud/                       # 🔧 For future DB Query functions
+│   │   └── database.py             # 🗄️ Async Engine, Session Factory, Base, URLs
+│   ├── crud/                       # 🔧 For future DB Query functions (empty)
 │   ├── models/
-│   │   └── models.py               # 🏗️ SQLAlchemy Database Models 
+│   │   └── models.py               # 🏗️ SQLAlchemy User Model (id, email, created_at, hashed_pass)
 │   └── schemas/
-│       └── schema.py               # 📜 Pydantic Validation Models 
-├── Dockerfile                      # 🐳 Docker configuration
-├── compose.yml                     # ⚙️ Docker Compose orchestration
+│       └── schema.py               # 📜 Pydantic Stock Validation Schema
+├── Dockerfile                      # 🐳 Docker configuration (python:3.12-slim, uv, start.sh)
+├── compose.yml                     # ⚙️ Docker Compose orchestration (PostgreSQL + Redis + FastAPI)
 ├── alembic.ini                     # 📐 Alembic migration config
 ├── migrations/                     # 🌊 Alembic generated files & versions
-├── pyproject.toml                  # 📦 Dependencies metadata
-├── uv.lock                         # 🔒 Dependency versions
-└── setup_manual.txt                # Developer notes for running Docker commands
+│   ├── env.py                      # Uses ALEMBIC_DATABASE_URL + Base metadata
+│   └── versions/
+│       └── d6f77d76792d_create_users_table.py
+├── start.sh                        # 🏁 Entrypoint: alembic upgrade head → uvicorn
+├── project_overview.txt            # 📄 This file
+├── setup_manual.txt                # Developer notes for running Docker commands
+├── pyproject.toml                  # 📦 Dependencies & metadata
+└── uv.lock                         # 🔒 Locked dependency versions
 ```
 
 ## 2. CORE PYTHON APPLICATION FILES (app/)
 
 ### File: `app/main.py`
 ```python
-from fastapi import FastAPI, Path
+from fastapi import FastAPI, Path, Request
+from app.core.database import AsyncSessionLocal, engine
+from contextlib import asynccontextmanager
+from sqlalchemy import text
 
-app = FastAPI()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+
+    app.state.db = AsyncSessionLocal
+    yield
+    await engine.dispose()
+
+
+
+app = FastAPI(lifespan=lifespan)
+
 
 @app.get("/health")
-async def health():
+async def health(request: Request):
+    async with request.app.state.db() as session:
+        await session.execute(text("SELECT 1"))
     return {"status" : "ok"}
 
 @app.get("/stock/{symbol}")
@@ -55,25 +81,33 @@ async def stock(symbol : str = Path(min_length=1, max_length=5, pattern= r"^[A-Z
 ```python
 #from dotenv import load_dotenv # Not needed with Docker Compose
 import os
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
+
+
 
 Base = declarative_base()
 #load_dotenv() #Unnecessary(Docker Compose injects .env vars into the environment)
 
 
 pg_password = os.getenv("POSTGRES_PASSWORD")
+
+
+
 if pg_password:
     DATABASE_URL = f"postgresql+asyncpg://postgres:{pg_password}@my_postgres:5432/stockpulse"
 
 else:
     raise RuntimeError("POSTGRES_PASSWORD environment variable not set")
 
+
+
+
 ALEMBIC_DATABASE_URL = f"postgresql://postgres:{pg_password}@my_postgres:5432/stockpulse"   
 
 engine = create_async_engine(DATABASE_URL)
 
-
+AsyncSessionLocal = async_sessionmaker(engine, class_= AsyncSession, expire_on_commit=False)
 ```
 
 ### File: `app/models/models.py`
@@ -90,6 +124,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String, nullable=False, unique=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+    hashed_pass = Column(String, nullable=False)
 ```
 
 ### File: `app/schemas/schema.py`
@@ -117,7 +152,14 @@ RUN uv sync
 
 COPY . .
 
-CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./start.sh"]
+```
+
+### File: `start.sh`
+```bash
+#!/bin/bash
+uv run alembic upgrade head
+/app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ### File: `compose.yml`
@@ -169,6 +211,30 @@ volumes:
   pgdata:             # declares the named volume
 ```
 
+### File: `pyproject.toml`
+```toml
+[project]
+name = "stockpulse"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.4",
+    "argon2-cffi>=25.1.0",
+    "asyncpg>=0.31.0",
+    "dotenv>=0.9.9",
+    "fastapi>=0.135.1",
+    "psycopg2-binary>=2.9.11",
+    "pydantic-settings>=2.13.1",
+    "pyjwt[crypto]>=2.12.1",
+    "python-dotenv>=1.2.2",
+    "sqlalchemy>=2.0.48",
+    "structlog>=25.5.0",
+    "uvicorn>=0.42.0",
+]
+```
+
 ### File: `.vscode/settings.json`
 ```json
 {
@@ -181,3 +247,9 @@ volumes:
     }
 }
 ```
+
+## 4. NOTES
+
+- The `hashed_pass` column was added to the User model but a corresponding Alembic migration has NOT yet been generated. The existing migration (d6f77d76792d) only creates id, email, and created_at.
+- Auth-related dependencies (argon2-cffi, pyjwt[crypto]) and structured logging (structlog) are installed but not yet used in code.
+- pydantic-settings is installed but not yet used for configuration management.
