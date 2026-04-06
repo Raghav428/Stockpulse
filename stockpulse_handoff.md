@@ -95,7 +95,11 @@ stockpulse/
 ├── migrations/
 │   ├── env.py                      # Uses ALEMBIC_DATABASE_URL + Base metadata + models import
 │   └── versions/
-│       └── d6f77d76792d_create_users_table.py
+│       ├── d6f77d76792d_create_users_table.py
+│       ├── fd2b8035fbf9_description_of_change.py
+│       ├── 954652c52dec_enhanced_user_details.py
+│       ├── 4c7e3028161a_updated_database.py
+│       └── c1ab01ca91e9_watchlist_tables.py
 ├── Dockerfile                      # python:3.12-slim, uv, start.sh entrypoint
 ├── compose.yml                     # PostgreSQL + Redis + FastAPI
 ├── start.sh                        # Runs alembic upgrade head then uvicorn
@@ -168,7 +172,7 @@ app.include_router(auth_router)
 **`app/models/models.py`**
 ```python
 from app.core.database import Base
-from sqlalchemy import Column, String, Integer, DateTime, Date, Boolean
+from sqlalchemy import Column, String, Integer, DateTime, Date, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.sql import func
 
 class User(Base):
@@ -182,6 +186,24 @@ class User(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
+
+class Watchlist(Base):
+    __tablename__ = "Watchlists"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    user_id = Column(Integer, ForeignKey("Users.id"), nullable=False)
+    
+class WatchlistItem(Base):
+    __tablename__ = "WatchlistItems"
+    
+    id = Column(Integer, primary_key=True)
+    watchlist_id = Column(Integer, ForeignKey("Watchlists.id"), nullable=False)
+    symbol = Column(String, nullable=False)
+    
+    __table_args__ = (
+        UniqueConstraint("watchlist_id", "symbol", name="uq_watchlist_item"),
+    )
 ```
 
 **`start.sh`**
@@ -484,10 +506,10 @@ Learned through reasoning, not memorization:
 - [x] Understand FastAPI middleware vs dependencies
 
 ### Day 5 — Watchlist Model + CRUD
-- Design `Watchlist` and `WatchlistItem` models
-- Migrations for new tables
-- `POST /watchlists`, `GET /watchlists`, `POST /watchlists/{id}/stocks`, `DELETE`
-- Foreign keys and relationships in SQLAlchemy
+- [x] Design `Watchlist` and `WatchlistItem` models
+- [x] Migrations for new tables
+- [ ] `POST /watchlists`, `GET /watchlists`, `POST /watchlists/{id}/stocks`, `DELETE`
+- [x] Foreign keys and relationships in SQLAlchemy
 
 ### Day 6 — nginx
 - Add nginx container to compose
