@@ -1,5 +1,17 @@
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, InvalidHash, VerificationError
+from datetime import datetime, timedelta, timezone
+from jwt import encode, decode
+from jwt.exceptions import PyJWTError as JWTError
+import os
+
+
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY is not set")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRY_IN_HOURS = 12
 
 
 # Tuned for local dev / learning.
@@ -41,3 +53,21 @@ def verify_password(plain_password: str, password_hash: str) -> tuple[bool, str 
     except (InvalidHash, VerificationError):
         # Corrupt or legacy hash — treated as auth failure externally
         return False, None
+
+
+def create_access_token(user_id: int) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(hours=ACCESS_TOKEN_EXPIRY_IN_HOURS)).timestamp()),
+    }
+    return encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_access_token(token:str) -> int:
+    try:
+        payload = decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return int(payload["sub"])
+    except JWTError:
+        raise ValueError("Invalid token")
