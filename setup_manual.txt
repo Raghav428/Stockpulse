@@ -1,5 +1,7 @@
 # STOCKPULSE - DOCKER SETUP & MIGRATIONS GUIDE
 
+⚠️ **URGENT SETUP NOTE**: The new authentication logic (`app/core/crypto.py`) requires a `SECRET_KEY` environment variable. Ensure `SECRET_KEY=your_secret_here` is defined in your `.env` file, and that it is passed to the `fastapi` service in `compose.yml` (e.g., under `environment:` add `SECRET_KEY: ${SECRET_KEY}`). If omitted, the login endpoints will crash when generating tokens!
+
 ### THE PROBLEMS WE ENCOUNTERED:
 1. HOST VS. CONTAINER NETWORKING:
    Running 'uv run alembic' locally failed because the terminal on your host doesn't know 

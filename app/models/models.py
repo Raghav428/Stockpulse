@@ -1,5 +1,5 @@
 from app.core.database import Base
-from sqlalchemy import Column, String, Integer, DateTime, Date, Boolean
+from sqlalchemy import Column, String, Integer, DateTime, Date, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.sql import func
 
 
@@ -14,3 +14,24 @@ class User(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
+
+
+class Watchlist(Base):
+    __tablename__ = "Watchlists"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    user_id = Column(Integer, ForeignKey("Users.id"), nullable=False)
+    
+
+class WatchlistItem(Base):
+    __tablename__ = "WatchlistItems"
+    
+    id = Column(Integer, primary_key=True)
+    watchlist_id = Column(Integer, ForeignKey("Watchlists.id"), nullable=False)
+    symbol = Column(String, nullable=False)
+    
+    __table_args__ = (
+        UniqueConstraint("watchlist_id", "symbol", name="uq_watchlist_item"),
+    )
+    

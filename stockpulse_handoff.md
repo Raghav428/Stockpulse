@@ -73,31 +73,35 @@ Ingestion Pipeline (runs independently):
 ### Project structure:
 ```
 stockpulse/
-├── .env                            # POSTGRES_PASSWORD (gitignored)
+├── .env                            # POSTGRES_PASSWORD, SECRET_KEY (gitignored)
 ├── .gitignore                      # Ignores __pycache__, .venv, .env, setup_manual.txt
 ├── .python-version                 # Python 3.12
 ├── .vscode/
 │   └── settings.json               # IDE config to hide __pycache__, .pyc, .pyo etc
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                     # FastAPI entry point (lifespan, async sessions, routes)
-│   ├── api/                        # Future API routers (empty)
+│   ├── main.py                     # FastAPI entry point (lifespan, async sessions, routers)
+│   ├── api/
+│   │   └── register.py             # Auth endpoints (register, login, user details)
 │   ├── core/
+│   │   ├── auth.py                 # Protected routes (get_current_user, OAuth2)
+│   │   ├── crypto.py               # Passwords/JWT (argon2, PyJWT)
 │   │   └── database.py             # Async engine, session factory, Base, URLs
 │   ├── crud/                       # Future DB query functions (empty)
 │   ├── models/
-│   │   └── models.py               # SQLAlchemy User model (id, email, created_at, hashed_pass)
+│   │   └── models.py               # SQLAlchemy User model (id, email, DOB, etc)
 │   └── schemas/
-│       └── schema.py               # Pydantic Stock schema
+│       └── schema.py               # Pydantic validation schemas (Stock, UserCreate, Login)
 ├── migrations/
 │   ├── env.py                      # Uses ALEMBIC_DATABASE_URL + Base metadata + models import
 │   └── versions/
-│       └── d6f77d76792d_create_users_table.py  # Creates Users table (id, email, created_at only)
+│       └── d6f77d76792d_create_users_table.py
 ├── Dockerfile                      # python:3.12-slim, uv, start.sh entrypoint
 ├── compose.yml                     # PostgreSQL + Redis + FastAPI
 ├── start.sh                        # Runs alembic upgrade head then uvicorn
 ├── alembic.ini
 ├── setup_manual.txt                # Developer notes for Docker commands
+├── project_overview.txt            # Repository overview
 ├── pyproject.toml
 └── uv.lock
 ```
@@ -120,7 +124,7 @@ stockpulse/
 
 ### ⚠️ Known issues:
 - **Auth dependencies mostly used now** — `argon2-cffi` and `pyjwt[crypto]` are in use, but `pydantic-settings` and `structlog` from `pyproject.toml` have not been implemented.
-- Login route (`POST /api/v1/auth/login`) is missing and needs to be implemented.
+- The `SECRET_KEY` environment variable is required by `app/core/crypto.py` but is currently missing from `.env` and `compose.yml`. This will crash login endpoints on token creation.
 
 ### Key files (current exact state):
 
@@ -147,32 +151,18 @@ AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_co
 
 **`app/main.py`**
 ```python
-from fastapi import FastAPI, Path, Request
-from app.core.database import AsyncSessionLocal, engine
+from fastapi import FastAPI
+from app.core.database import engine
 from contextlib import asynccontextmanager
-from sqlalchemy import text
+from app.api.register import router as auth_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.db = AsyncSessionLocal
     yield
     await engine.dispose()
 
 app = FastAPI(lifespan=lifespan)
-
-@app.get("/health")
-async def health(request: Request):
-    async with request.app.state.db() as session:
-        await session.execute(text("SELECT 1"))
-    return {"status": "ok"}
-
-@app.get("/stock/{symbol}")
-async def stock(symbol: str = Path(min_length=1, max_length=5, pattern=r"^[A-Z]+$")):
-    return {
-        "symbol": symbol,
-        "price": 3 * int(len(symbol)) + 2,
-        "date_listed": "23/01/2003"
-    }
+app.include_router(auth_router)
 ```
 
 **`app/models/models.py`**
@@ -252,6 +242,183 @@ volumes:
   pgdata:
 ```
 
+**`app/schemas/schema.py`**
+```python
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from datetime import date, datetime
+
+class Stock(BaseModel):
+    symbol : str = Field(min_length=1, max_length=5)
+
+class UserCreate(BaseModel):
+    first_name : str = Field(min_length=1, max_length=50)
+    last_name : str
+    DOB : date
+    email : EmailStr
+    password : str = Field(min_length=8)
+
+class UserResponse(BaseModel):
+    id : int
+    is_active: bool
+    created_at : datetime
+    first_name : str
+    last_name : str
+    email: EmailStr
+    DOB : date
+    model_config = ConfigDict(from_attributes = True)
+
+class UserLogin(BaseModel):
+    email : EmailStr
+    password : str
+```
+
+**`app/core/crypto.py`**
+```python
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, InvalidHash, VerificationError
+from datetime import datetime, timedelta, timezone
+from jwt import encode, decode
+from jwt.exceptions import PyJWTError as JWTError
+import os
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY is not set")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRY_IN_HOURS = 12
+
+ph = PasswordHasher(
+    time_cost=3, memory_cost=102400, parallelism=8,
+    hash_len=32, salt_len=16
+)
+
+def _normalize(password: str) -> str:
+    return password.strip()
+
+def hash_password(password: str) -> str:
+    password = _normalize(password)
+    return ph.hash(password)
+
+def verify_password(plain_password: str, password_hash: str) -> tuple[bool, str | None]:
+    try:
+        plain_password = _normalize(plain_password)
+        ph.verify(password_hash, plain_password)
+        if ph.check_needs_rehash(password_hash):
+            return True, ph.hash(plain_password)
+        return True, None
+    except VerifyMismatchError:
+        return False, None
+    except (InvalidHash, VerificationError):
+        return False, None
+
+def create_access_token(user_id: int) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id), "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(hours=ACCESS_TOKEN_EXPIRY_IN_HOURS)).timestamp()),
+    }
+    return encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_access_token(token:str) -> int:
+    try:
+        payload = decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return int(payload["sub"])
+    except JWTError:
+        raise ValueError("Invalid token")
+```
+
+**`app/core/auth.py`**
+```python
+from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, status
+from datetime import datetime, timezone
+from app.core.crypto import decode_access_token
+from app.core.database import get_db
+from app.models.models import User
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
+    try:
+        user_id = decode_access_token(token)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
+    
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
+    return user
+```
+
+**`app/api/register.py`**
+```python
+from fastapi import APIRouter, HTTPException, status
+from app.schemas.schema import UserCreate, UserResponse, UserLogin
+from app.models.models import User
+from sqlalchemy import select
+from app.core.database import get_db
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.crypto import hash_password, verify_password, create_access_token
+from app.core.auth import get_current_user
+
+
+router = APIRouter(prefix = '/api/v1/auth')
+@router.post("/register")
+async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+    existing =  ( await db.execute(select(User).where(User.email == user_data.email))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="Registration failed!")
+
+    hashed_password = hash_password(user_data.password) 
+    user = User(
+        email = user_data.email,
+        hashed_password = hashed_password,
+        is_active = True,
+        DOB = user_data.DOB,
+        first_name = user_data.first_name,
+        last_name = user_data.last_name
+    )
+
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return UserResponse.model_validate(user)
+
+@router.get("/users/me")
+async def get_user_data(user: User = Depends(get_current_user)):
+    return UserResponse.model_validate(user)
+
+@router.get("/users/{id}")
+async def fetch_user(id: int, db: AsyncSession = Depends(get_db)):
+    user =  ( await db.execute(select(User).where(User.id == id))).scalar_one_or_none()
+
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User Not Found")        
+    return UserResponse.model_validate(user)
+
+@router.post("/login")
+async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
+    existing =  ( await db.execute(select(User).where(User.email == user_data.email))).scalar_one_or_none()
+
+    if not existing:
+        raise HTTPException(status_code=401, detail="Invalid Credentials")
+
+    is_valid, new_hash = verify_password(user_data.password, existing.hashed_password)
+    if is_valid:
+        if new_hash:
+            existing.hashed_password = new_hash
+            await db.commit()
+            await db.refresh(existing)
+        token = create_access_token(existing.id)
+        return {"token":str(token), "token_type": "bearer"}
+    else:
+        raise HTTPException(status_code=401, detail="Invalid Credentials")
+```
+
 ### Dependencies (`pyproject.toml`):
 ```
 alembic, argon2-cffi, asyncpg, dotenv, fastapi, psycopg2-binary,
@@ -307,14 +474,14 @@ Learned through reasoning, not memorization:
 ### Day 3 — Password Hashing + Auth Setup
 - [x] Hash passwords with `argon2-cffi` before storing
 - [x] JWT token generation functions
-- [ ] `POST /api/v1/auth/login` — verify credentials, return JWT token
-- [ ] Understand JWT structure: header, payload, signature
+- [x] `POST /api/v1/auth/login` — verify credentials, return JWT token
+- [x] Understand JWT structure: header, payload, signature
 
 ### Day 4 — Protected Routes + Middleware
-- Decode and verify JWT on protected routes
-- Build a `get_current_user` dependency
-- `GET /users/me` — returns current user from token
-- Understand FastAPI middleware vs dependencies
+- [x] Decode and verify JWT on protected routes
+- [x] Build a `get_current_user` dependency
+- [x] `GET /users/me` — returns current user from token
+- [x] Understand FastAPI middleware vs dependencies
 
 ### Day 5 — Watchlist Model + CRUD
 - Design `Watchlist` and `WatchlistItem` models

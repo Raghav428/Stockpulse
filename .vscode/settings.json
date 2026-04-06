@@ -1,4 +1,12 @@
 {
+    "editor.quickSuggestions": {
+        "other": false,
+        "comments": false,
+        "strings": false
+    },
+    "editor.suggestOnTriggerCharacters": false,
+    "editor.wordBasedSuggestions": "off",
+    "editor.acceptSuggestionOnEnter": "off",
     "files.exclude": {
         "**/__pycache__": true,
         "**/*.pyc": true,

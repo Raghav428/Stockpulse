@@ -33,6 +33,7 @@ services:
     build: .
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SECRET_KEY: ${SECRET_KEY}
     volumes:
       - .:/app
       - /app/.venv # <--- This tells Docker to use the container's .venv, NOT your local one!

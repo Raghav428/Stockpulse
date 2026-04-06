@@ -15,15 +15,18 @@ stockpulse/
 │   └── settings.json               # IDE config to hide __pycache__
 ├── app/                            # 📦 Application Code
 │   ├── __init__.py                 
-│   ├── main.py                     # 🚀 FastAPI Entry Point (lifespan, async sessions)
-│   ├── api/                        # 🛣️ For future API Routers (empty)
+│   ├── main.py                     # 🚀 FastAPI Entry Point (routers, lifespan, async sessions)
+│   ├── api/
+│   │   └── register.py             # 🛣️ Auth endpoints (register, login, user details)
 │   ├── core/
+│   │   ├── auth.py                 # 🛡️ Protected routes (get_current_user, OAuth2)
+│   │   ├── crypto.py               # 🔑 Passwords/JWT (argon2, PyJWT)
 │   │   └── database.py             # 🗄️ Async Engine, Session Factory, Base, URLs
 │   ├── crud/                       # 🔧 For future DB Query functions (empty)
 │   ├── models/
-│   │   └── models.py               # 🏗️ SQLAlchemy User Model (id, email, created_at, hashed_pass)
+│   │   └── models.py               # 🏗️ SQLAlchemy User Model (id, email, DOB, etc)
 │   └── schemas/
-│       └── schema.py               # 📜 Pydantic Stock Validation Schema
+│       └── schema.py               # 📜 Pydantic Validation Schemas (Stock, UserCreate, Login, etc)
 ├── Dockerfile                      # 🐳 Docker configuration (python:3.12-slim, uv, start.sh)
 ├── compose.yml                     # ⚙️ Docker Compose orchestration (PostgreSQL + Redis + FastAPI)
 ├── alembic.ini                     # 📐 Alembic migration config
@@ -42,39 +45,18 @@ stockpulse/
 
 ### File: `app/main.py`
 ```python
-from fastapi import FastAPI, Path, Request
-from app.core.database import AsyncSessionLocal, engine
+from fastapi import FastAPI
+from app.core.database import engine
 from contextlib import asynccontextmanager
-from sqlalchemy import text
-
-
+from app.api.register import router as auth_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
-    app.state.db = AsyncSessionLocal
     yield
     await engine.dispose()
 
-
-
 app = FastAPI(lifespan=lifespan)
-
-
-@app.get("/health")
-async def health(request: Request):
-    async with request.app.state.db() as session:
-        await session.execute(text("SELECT 1"))
-    return {"status" : "ok"}
-
-@app.get("/stock/{symbol}")
-async def stock(symbol : str = Path(min_length=1, max_length=5, pattern= r"^[A-Z]+$")):
-    return {
-        "symbol" : symbol,
-        "price" : 3*int(len(symbol)) + 2,
-        "date_listed" : "23/01/2003"
-
-    }
+app.include_router(auth_router)
 ```
 
 ### File: `app/core/database.py`
@@ -129,11 +111,217 @@ class User(Base):
 
 ### File: `app/schemas/schema.py`
 ```python
-from pydantic import BaseModel, Field
-
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from datetime import date, datetime
 
 class Stock(BaseModel):
     symbol : str = Field(min_length=1, max_length=5)
+
+class UserCreate(BaseModel):
+    first_name : str = Field(min_length=1, max_length=50)
+    last_name : str
+    DOB : date
+    email : EmailStr
+    password : str = Field(min_length=8)
+
+class UserResponse(BaseModel):
+    id : int
+    is_active: bool
+    created_at : datetime
+    first_name : str
+    last_name : str
+    email: EmailStr
+    DOB : date
+    model_config = ConfigDict(from_attributes = True)
+
+class UserLogin(BaseModel):
+    email : EmailStr
+    password : str
+```
+
+### File: `app/core/auth.py`
+```python
+from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, status
+from datetime import datetime, timezone
+from app.core.crypto import decode_access_token
+from app.core.database import get_db
+from app.models.models import User
+
+
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
+
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
+    
+    try:
+        user_id = decode_access_token(token)
+    
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
+    
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
+    
+    return user
+```
+
+### File: `app/api/register.py`
+```python
+from fastapi import APIRouter, HTTPException, status
+from app.schemas.schema import UserCreate, UserResponse, UserLogin
+from app.models.models import User
+from sqlalchemy import select
+from app.core.database import get_db
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.crypto import hash_password, verify_password, create_access_token
+from app.core.auth import get_current_user
+
+
+router = APIRouter(prefix = '/api/v1/auth')
+@router.post("/register")
+async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+   
+    existing =  ( await
+            db.execute(select(User)
+            .where(User.email == user_data.email)
+            )).scalar_one_or_none()
+
+    
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="Registration failed!"
+        )
+
+    hashed_password = hash_password(user_data.password) ###filler function
+
+    user = User(
+        email = user_data.email,
+        hashed_password = hashed_password,
+        is_active = True,
+        DOB = user_data.DOB,
+        first_name = user_data.first_name,
+        last_name = user_data.last_name
+        )
+
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return UserResponse.model_validate(user)
+
+
+@router.get("/users/me")
+async def get_user_data(user: User = Depends(get_current_user)):
+    return UserResponse.model_validate(user)
+
+    
+@router.get("/users/{id}")
+async def fetch_user(id: int, db: AsyncSession = Depends(get_db)):
+   
+    user =  ( await
+            db.execute(select(User)
+            .where(User.id == id)
+            )).scalar_one_or_none()
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User Not Found"
+        )        
+
+    return UserResponse.model_validate(user)
+
+
+@router.post("/login")
+async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
+
+    existing =  ( 
+            await db.execute(select(User)
+            .where(User.email == user_data.email)
+            )).scalar_one_or_none()
+
+    if not existing:
+        raise HTTPException(status_code=401, detail="Invalid Credentials")
+
+    is_valid, new_hash = verify_password(user_data.password, existing.hashed_password)
+
+    if is_valid:
+        
+        if new_hash:
+            existing.hashed_password = new_hash
+            await db.commit()
+            await db.refresh(existing)
+        
+        token = create_access_token(existing.id)
+        
+        return {"token":str(token), "token_type": "bearer"}
+
+    else:
+        raise HTTPException(status_code=401, detail="Invalid Credentials")
+```
+
+### File: `app/core/crypto.py`
+```python
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, InvalidHash, VerificationError
+from datetime import datetime, timedelta, timezone
+from jwt import encode, decode
+from jwt.exceptions import PyJWTError as JWTError
+import os
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY is not set")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRY_IN_HOURS = 12
+
+ph = PasswordHasher(
+    time_cost=3, memory_cost=102400, parallelism=8,
+    hash_len=32, salt_len=16
+)
+
+def _normalize(password: str) -> str:
+    return password.strip()
+
+def hash_password(password: str) -> str:
+    password = _normalize(password)
+    return ph.hash(password)
+
+def verify_password(plain_password: str, password_hash: str) -> tuple[bool, str | None]:
+    try:
+        plain_password = _normalize(plain_password)
+        ph.verify(password_hash, plain_password)
+        if ph.check_needs_rehash(password_hash):
+            return True, ph.hash(plain_password)
+        return True, None
+    except VerifyMismatchError:
+        return False, None
+    except (InvalidHash, VerificationError):
+        return False, None
+
+def create_access_token(user_id: int) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id), "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(hours=ACCESS_TOKEN_EXPIRY_IN_HOURS)).timestamp()),
+    }
+    return encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_access_token(token:str) -> int:
+    try:
+        payload = decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return int(payload["sub"])
+    except JWTError:
+        raise ValueError("Invalid token")
 ```
 
 ## 3. CONFIGURATION & INFRASTRUCTURE FILES
