@@ -4,7 +4,7 @@
         "comments": false,
         "strings": false
     },
-    "editor.suggestOnTriggerCharacters": false,
+    "editor.suggestOnTriggerCharacters": true,
     "editor.wordBasedSuggestions": "off",
     "editor.acceptSuggestionOnEnter": "off",
     "files.exclude": {
