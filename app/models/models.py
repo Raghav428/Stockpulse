@@ -22,6 +22,7 @@ class Watchlist(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     user_id = Column(Integer, ForeignKey("Users.id"), nullable=False)
+    items = relationship("WatchlistItem", back_populates="watchlist")
     
 
 class WatchlistItem(Base):
@@ -30,8 +31,23 @@ class WatchlistItem(Base):
     id = Column(Integer, primary_key=True)
     watchlist_id = Column(Integer, ForeignKey("Watchlists.id"), nullable=False)
     symbol = Column(String, nullable=False)
-    
+    watchlist = relationship("Watchlist", back_populates="items")
     __table_args__ = (
         UniqueConstraint("watchlist_id", "symbol", name="uq_watchlist_item"),
     )
-    
+
+from pydantic import BaseModel, model_validator, ConfigDict
+
+class WatchlistResponse(BaseModel):
+    id: int
+    name: str
+    user_id: int
+    symbols: list[str] = []
+    model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract_symbols(cls, data):
+        if hasattr(data, 'items'):
+            data.__dict__['symbols'] = [item.symbol for item in data.items]
+        return data

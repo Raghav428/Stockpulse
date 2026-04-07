@@ -10,6 +10,9 @@ from app.core.auth import get_current_user
 
 
 router = APIRouter(prefix = '/api/v1/auth')
+
+
+
 @router.post("/register")
 async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
    

@@ -25,3 +25,17 @@ class UserResponse(BaseModel):
 class UserLogin(BaseModel):
     email : EmailStr
     password : str
+
+class WatchlistCreate(BaseModel):
+    name : str = Field(min_length=1, max_length=50)
+    
+class AppendWatchlist(BaseModel):
+    symbol : str = Field(min_length=1, max_length=5)
+    watchlist_id : int
+
+class WatchlistResponse(BaseModel):
+    id : int
+    name : str
+    user_id : int
+    symbols: list[str] = []
+    model_config = ConfigDict(from_attributes = True)
