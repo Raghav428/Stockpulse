@@ -68,6 +68,6 @@ def create_access_token(user_id: int) -> str:
 def decode_access_token(token:str) -> int:
     try:
         payload = decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return int(payload["sub"])
+        return int(payload.get("sub"))
     except JWTError:
         raise ValueError("Invalid token")

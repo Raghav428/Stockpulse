@@ -7,13 +7,15 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.crypto import hash_password, verify_password, create_access_token
 from app.core.auth import get_current_user
+from fastapi.security import OAuth2PasswordRequestForm
+
 
 
 router = APIRouter(prefix = '/api/v1/auth')
 
 
 
-@router.post("/register")
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
    
     existing =  ( await
@@ -45,12 +47,12 @@ async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db
     return UserResponse.model_validate(user)
 
 
-@router.get("/users/me")
+@router.get("/users/me", response_model=UserResponse)
 async def get_user_data(user: User = Depends(get_current_user)):
     return UserResponse.model_validate(user)
 
     
-@router.get("/users/{id}")
+@router.get("/users/{id}", response_model=UserResponse)
 async def fetch_user(id: int, db: AsyncSession = Depends(get_db)):
    
     user =  ( await
@@ -68,11 +70,11 @@ async def fetch_user(id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login")
-async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(user_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
 
     existing =  ( 
             await db.execute(select(User)
-            .where(User.email == user_data.email)
+            .where(User.email == user_data.username)
             )).scalar_one_or_none()
 
     if not existing:
