@@ -1,8 +1,8 @@
 {
     "editor.quickSuggestions": {
-        "other": false,
+        "other": true,
         "comments": false,
-        "strings": false
+        "strings": true
     },
     "editor.suggestOnTriggerCharacters": true,
     "editor.wordBasedSuggestions": "off",

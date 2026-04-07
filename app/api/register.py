@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, status
-from app.schemas.schema import UserCreate, UserResponse, UserLogin
+from app.schemas.schema import UserCreate, UserResponse
 from app.models.models import User
 from sqlalchemy import select
 from app.core.database import get_db
