@@ -36,18 +36,3 @@ class WatchlistItem(Base):
         UniqueConstraint("watchlist_id", "symbol", name="uq_watchlist_item"),
     )
 
-from pydantic import BaseModel, model_validator, ConfigDict
-
-class WatchlistResponse(BaseModel):
-    id: int
-    name: str
-    user_id: int
-    symbols: list[str] = []
-    model_config = ConfigDict(from_attributes=True)
-
-    @model_validator(mode='before')
-    @classmethod
-    def extract_symbols(cls, data):
-        if hasattr(data, 'items'):
-            data.__dict__['symbols'] = [item.symbol for item in data.items]
-        return data
