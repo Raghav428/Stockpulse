@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import engine, get_db
@@ -18,7 +18,7 @@ app.include_router(auth_router)
 app.include_router(watchlists_router)
 
 
-@app.get("/health")
+@app.get("/health", status_code=status.HTTP_200_OK)
 async def health(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(1))
     

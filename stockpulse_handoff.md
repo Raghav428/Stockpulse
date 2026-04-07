@@ -79,6 +79,8 @@ stockpulse/
 ├── .dockerignore
 ├── .vscode/
 │   └── settings.json
+├── .env.example
+├── nginx.conf
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                     # FastAPI entry point (lifespan, routers)
@@ -515,9 +517,40 @@ services:
     depends_on:
       my_postgres:
         condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:8000/health']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    image: nginx
+    volumes:
+    - ./nginx.conf:/etc/nginx/nginx.conf
+    ports:
+    - "80:80"
+    depends_on:
+      fastapi:
+        condition: service_healthy
 
 volumes:
   pgdata:
+```
+
+**`nginx.conf`**
+```nginx
+server {
+    listen 80;
+    location / {
+        proxy_pass http://fastapi:8000;
+    }
+}
+```
+
+**`.env.example`**
+```text
+POSTGRES_PASSWORD=...................
+SECRET_KEY=................
 ```
 
 **`Dockerfile`**
@@ -622,17 +655,17 @@ Learned through reasoning, not memorization:
 - [x] `model_validator` to extract symbols from WatchlistItems into WatchlistResponse
 - [x] `POST /watchlists`, `GET /watchlists`, `POST /watchlists/{id}/stocks`, `DELETE /watchlists/{id}/stocks/{symbol}`
 
-### Day 6 — nginx
-- Add nginx container to compose
-- Write `nginx.conf` — reverse proxy to FastAPI
-- Understand `location` blocks, `proxy_pass`, `upstream`
-- All traffic flows through nginx, not directly to FastAPI
-- Test all existing endpoints work through nginx
+### Day 6 🚧 — nginx
+- [ ] Add nginx container to compose
+- [ ] Write `nginx.conf` — reverse proxy to FastAPI
+- [ ] Understand `location` blocks, `proxy_pass`, `upstream`
+- [ ] All traffic flows through nginx, not directly to FastAPI
+- [ ] Test all existing endpoints work through nginx
 
 ### Day 7 — Review + Git + README
-- Set up proper Git repo with meaningful commit history
-- Write README with ASCII architecture diagram
-- Full `docker compose down -v && docker compose up --build` from scratch — verify clean boot
+- [ ] Set up proper Git repo with meaningful commit history
+- [ ] Write README with ASCII architecture diagram
+- [ ] Full `docker compose down -v && docker compose up --build` from scratch — verify clean boot
 
 ### Day 8 — Cassandra Introduction
 - Add Cassandra to compose
