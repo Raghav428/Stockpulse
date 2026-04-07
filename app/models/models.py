@@ -1,6 +1,7 @@
 from app.core.database import Base
-from sqlalchemy import Column, String, Integer, DateTime, Date, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Integer, DateTime, Date, Boolean, ForeignKey, UniqueConstraint, relationship
 from sqlalchemy.sql import func
+
 
 
 class User(Base):
@@ -16,6 +17,7 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, default=True)
 
 
+
 class Watchlist(Base):
     __tablename__ = "Watchlists"
 
@@ -24,6 +26,7 @@ class Watchlist(Base):
     user_id = Column(Integer, ForeignKey("Users.id"), nullable=False)
     items = relationship("WatchlistItem", back_populates="watchlist")
     
+
 
 class WatchlistItem(Base):
     __tablename__ = "WatchlistItems"
