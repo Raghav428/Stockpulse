@@ -137,7 +137,6 @@ stockpulse/
 
 ### ⚠️ Known issues / pending:
 - `pydantic-settings` and `structlog` installed but not yet wired in
-- `project_overview.txt` is stale — notes say auth is unimplemented (it is implemented). Can be deleted or updated.
 - Login returns `{"token": ..., "token_type": "bearer"}` — note the key is `token` not `access_token`. Non-standard but functional. Consider aligning with OAuth2 spec (`access_token`) later.
 - `selectinload` vs JOIN — learner understands what selectinload does but hasn't fully articulated why it's better than a JOIN for N+1 scenarios. Pending discussion.
 
@@ -398,8 +397,8 @@ async def fetch_user(id: int, db: AsyncSession = Depends(get_db)):
     return UserResponse.model_validate(user)
 
 @router.post("/login")
-async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
-    existing = (await db.execute(select(User).where(User.email == user_data.email))).scalar_one_or_none()
+async def login(user_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+    existing = (await db.execute(select(User).where(User.email == user_data.username))).scalar_one_or_none()
     if not existing:
         raise HTTPException(status_code=401, detail="Invalid Credentials")
 
