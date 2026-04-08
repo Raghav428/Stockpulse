@@ -35,7 +35,7 @@ services:
 
 
 #>>>>>>>>Cassandra<<<<<<<<<<<<#
-  cassandra:
+  my_cassandra:
     image: cassandra
     ports:
       - "9042:9042"
