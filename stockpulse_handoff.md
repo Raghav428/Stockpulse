@@ -1,5 +1,5 @@
 # StockPulse AI — Project Handoff Document v4
-**Last Updated:** April 7, 2026
+**Last Updated:** April 8, 2026
 **Purpose:** Complete context for any engineer, mentor, or LLM continuing this project
 
 ---
@@ -116,8 +116,9 @@ stockpulse/
 ```
 
 ### What is fully working:
-- Full Docker Compose stack: PostgreSQL + Redis + FastAPI boots cleanly from scratch
-- PostgreSQL healthcheck — FastAPI waits for `service_healthy` before starting
+- Full Docker Compose stack: PostgreSQL + Redis + Cassandra + FastAPI boots cleanly from scratch
+- Service healthchecks — FastAPI waits for PostgreSQL, Redis, and Cassandra to be `service_healthy` before starting
+- Improved reliability — Healthcheck retries increased to 50 to handle slow initial database boots
 - `start.sh` entrypoint — Alembic migrations run automatically on every container start
 - `.env` secrets — `POSTGRES_PASSWORD` and `SECRET_KEY` injected via Compose, gitignored
 - FastAPI `/health` — runs real `SELECT 1` against PostgreSQL via async session
@@ -134,7 +135,7 @@ stockpulse/
 - Alembic migrations — full schema history, runs automatically in container on startup
 - Async SQLAlchemy with `asyncpg` — connection pooling via `async_sessionmaker`
 - Layer caching in Docker builds — dependencies cached separately from code
-- Volume persistence — `pgdata` survives container restarts
+- Volume persistence — `pgdata` (Postgres) and `cassandra_data` (Cassandra) survive container restarts
 - Bind mount with `.venv` exclusion — local code changes reflect in container without rebuilds
 
 ### ⚠️ Known issues / pending:
@@ -497,12 +498,29 @@ services:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 50
 
   my_redis:
     image: redis
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli ping']
+      interval: 5s
+      timeout: 5s
+      retries: 50
+
+  cassandra:
+    image: cassandra
+    ports:
+      - "9042:9042"
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    healthcheck:
+      test: ['CMD-SHELL', 'nodetool status']
+      interval: 5s
+      timeout: 5s
+      retries: 50
 
   fastapi:
     build: .
@@ -517,11 +535,15 @@ services:
     depends_on:
       my_postgres:
         condition: service_healthy
+      cassandra:
+        condition: service_healthy
+      my_redis:
+        condition: service_healthy
     healthcheck:
       test: ['CMD-SHELL', 'curl -f http://localhost:8000/health']
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 50
 
   nginx:
     image: nginx
@@ -535,6 +557,7 @@ services:
 
 volumes:
   pgdata:
+  cassandra_data:
 ```
 
 **`nginx.conf`**
@@ -655,24 +678,24 @@ Learned through reasoning, not memorization:
 - [x] `model_validator` to extract symbols from WatchlistItems into WatchlistResponse
 - [x] `POST /watchlists`, `GET /watchlists`, `POST /watchlists/{id}/stocks`, `DELETE /watchlists/{id}/stocks/{symbol}`
 
-### Day 6 🚧 — nginx
-- [ ] Add nginx container to compose
-- [ ] Write `nginx.conf` — reverse proxy to FastAPI
-- [ ] Understand `location` blocks, `proxy_pass`, `upstream`
-- [ ] All traffic flows through nginx, not directly to FastAPI
-- [ ] Test all existing endpoints work through nginx
+### Day 6 ✅ — nginx
+- [x] Add nginx container to compose
+- [x] Write `nginx.conf` — reverse proxy to FastAPI
+- [x] Understand `location` blocks, `proxy_pass`, `upstream`
+- [x] All traffic flows through nginx, not directly to FastAPI
+- [x] Test all existing endpoints work through nginx
 
-### Day 7 — Review + Git + README
-- [ ] Set up proper Git repo with meaningful commit history
-- [ ] Write README with ASCII architecture diagram
-- [ ] Full `docker compose down -v && docker compose up --build` from scratch — verify clean boot
+### Day 7 ✅ — Review + Git + README
+- [x] Set up proper Git repo with meaningful commit history
+- [x] Write README with ASCII architecture diagram
+- [x] Full `docker compose down -v && docker compose up --build` from scratch — verify clean boot
 
 ### Day 8 — Cassandra Introduction
-- Add Cassandra to compose
-- Understand keyspaces, tables, partitions
-- Connect from Python using `cassandra-driver`
-- Create `tick_data` table: `PRIMARY KEY ((symbol, date), ts)`
-- Insert and query dummy tick rows
+- [x] Add Cassandra to compose
+- [/] Understand keyspaces, tables, partitions
+- [ ] Connect from Python using `cassandra-driver`
+- [ ] Create `tick_data` table: `PRIMARY KEY ((symbol, date), ts)`
+- [ ] Insert and query dummy tick rows
 
 ### Day 9 — Cassandra + FastAPI Integration
 - `GET /stocks/{symbol}/history?date=2026-03-25`
