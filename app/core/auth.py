@@ -3,9 +3,8 @@ from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
-from datetime import datetime, timezone
 from app.core.crypto import decode_access_token
-from app.core.database import get_db
+from app.core.postgresql import get_db
 from app.models.models import User
 
 

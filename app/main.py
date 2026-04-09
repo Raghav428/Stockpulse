@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.core.database import engine, get_db
+from app.core.postgresql import engine, get_db
+from app.core.cassandra import connect_cassandra, close_cassandra
 from contextlib import asynccontextmanager
 from app.api.register import router as auth_router
 from app.api.watchlists import router as watchlists_router
@@ -9,8 +10,10 @@ from app.api.watchlists import router as watchlists_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    connect_cassandra()
     yield
     await engine.dispose()
+    close_cassandra()
 
 app = FastAPI(lifespan=lifespan)
 
