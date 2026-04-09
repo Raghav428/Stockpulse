@@ -19,7 +19,10 @@ WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}
         symbol text,
         date text,
         ts timestamp,
-        price double,
+        open double,
+        high double,
+        low double,
+        close double,
         volume int,
         PRIMARY KEY ((symbol, date), ts)
     )""")
