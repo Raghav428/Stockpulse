@@ -90,7 +90,7 @@ stockpulse/
 │   ├── core/
 │   │   ├── auth.py                 # get_current_user dependency (OAuth2 + JWT decode)
 │   │   ├── crypto.py               # Argon2 hashing + PyJWT token create/decode
-│   │   └── database.py             # Async engine, session factory, Base, URLs, get_db
+│   │   └── postgresql.py           # Async engine, session factory, Base, URLs, get_db
 │   ├── crud/                       # Empty — future DB query functions
 │   ├── models/
 │   │   └── models.py               # SQLAlchemy: User, Watchlist, WatchlistItem
@@ -149,23 +149,36 @@ stockpulse/
 
 **`app/main.py`**
 ```python
-from fastapi import FastAPI
-from app.core.database import engine
+from fastapi import FastAPI, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.core.postgresql import engine, get_db
+from app.core.cassandra import connect_cassandra, close_cassandra
 from contextlib import asynccontextmanager
 from app.api.register import router as auth_router
 from app.api.watchlists import router as watchlists_router
+from app.api.historical_data import router as historical_data_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    connect_cassandra()
     yield
     await engine.dispose()
+    close_cassandra()
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(watchlists_router)
+app.include_router(historical_data_router)
+
+@app.get("/health", status_code=status.HTTP_200_OK)
+async def health(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(1))
+    if result:
+        return {'status' : 'healthy'}
 ```
 
-**`app/core/database.py`**
+**`app/core/postgresql.py`**
 ```python
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
@@ -173,19 +186,60 @@ from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
+### PostgreSQL password loading
 pg_password = os.getenv("POSTGRES_PASSWORD")
+
 if pg_password:
     DATABASE_URL = f"postgresql+asyncpg://postgres:{pg_password}@my_postgres:5432/stockpulse"
 else:
     raise RuntimeError("POSTGRES_PASSWORD environment variable not set")
+###
 
-ALEMBIC_DATABASE_URL = f"postgresql://postgres:{pg_password}@my_postgres:5432/stockpulse"
+#Sync Database URL for migrations
+ALEMBIC_DATABASE_URL = f"postgresql://postgres:{pg_password}@my_postgres:5432/stockpulse"   
+#Async engine
 engine = create_async_engine(DATABASE_URL)
-AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+#Async session factory
+AsyncSessionLocal = async_sessionmaker(engine, class_= AsyncSession, expire_on_commit=False)
 
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
+```
+
+**`app/core/cassandra.py`**
+```python
+from cassandra.cluster import Cluster
+
+cluster = None
+session = None
+
+def connect_cassandra():
+    global cluster, session
+    cluster = Cluster(["my_cassandra"])
+    session = cluster.connect()
+
+    session.execute("""
+CREATE KEYSPACE IF NOT EXISTS stockpulse
+WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}
+""")
+    session.set_keyspace("stockpulse")
+
+    session.execute("""
+    CREATE TABLE IF NOT EXISTS tick_data(
+        symbol text,
+        date text,
+        ts timestamp,
+        open double,
+        high double,
+        low double,
+        close double,
+        volume int,
+        PRIMARY KEY ((symbol, date), ts)
+    )""")
+
+def close_cassandra():
+    cluster.shutdown()
 ```
 
 **`app/core/crypto.py`**
@@ -203,12 +257,18 @@ if not SECRET_KEY:
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRY_IN_HOURS = 12
 
+# Tuned for local dev / learning.
+# These parameters are SAFE and MEMORY-HARD.
 ph = PasswordHasher(
-    time_cost=3, memory_cost=102400, parallelism=8,
-    hash_len=32, salt_len=16
+    time_cost=3,
+    memory_cost=102400,  # 100 MB
+    parallelism=8,
+    hash_len=32,
+    salt_len=16,
 )
 
 def _normalize(password: str) -> str:
+    # Single normalization point
     return password.strip()
 
 def hash_password(password: str) -> str:
@@ -219,12 +279,15 @@ def verify_password(plain_password: str, password_hash: str) -> tuple[bool, str 
     try:
         plain_password = _normalize(plain_password)
         ph.verify(password_hash, plain_password)
+        # Opportunistic rehash if parameters changed
         if ph.check_needs_rehash(password_hash):
             return True, ph.hash(plain_password)
         return True, None
     except VerifyMismatchError:
+        # Wrong password
         return False, None
     except (InvalidHash, VerificationError):
+        # Corrupt or legacy hash — treated as auth failure externally
         return False, None
 
 def create_access_token(user_id: int) -> str:
@@ -251,7 +314,7 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.crypto import decode_access_token
-from app.core.database import get_db
+from app.core.postgresql import get_db
 from app.models.models import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
@@ -270,7 +333,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 **`app/models/models.py`**
 ```python
-from app.core.database import Base
+from app.core.postgresql import Base
 from sqlalchemy import Column, String, Integer, DateTime, Date, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -352,6 +415,10 @@ class WatchlistResponse(BaseModel):
         if hasattr(data, 'items'):
             data.__dict__['symbols'] = [item.symbol for item in data.items]
         return data
+
+class StockHistory(BaseModel):
+    date: date
+    symbol: str
 ```
 
 **`app/api/register.py`**
@@ -361,9 +428,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app.schemas.schema import UserCreate, UserResponse, UserLogin
+from app.schemas.schema import UserCreate, UserResponse
 from app.models.models import User
-from app.core.database import get_db
+from app.core.postgresql import get_db
 from app.core.crypto import hash_password, verify_password, create_access_token
 from app.core.auth import get_current_user
 
@@ -424,7 +491,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.core.database import get_db
+from app.core.postgresql import get_db
 from app.core.auth import get_current_user
 from app.models.models import User, Watchlist, WatchlistItem
 from app.schemas.schema import WatchlistCreate, AppendWatchlist, WatchlistResponse
@@ -432,44 +499,95 @@ from app.schemas.schema import WatchlistCreate, AppendWatchlist, WatchlistRespon
 router = APIRouter(prefix='/api/v1/watchlists')
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=WatchlistResponse)
-async def create_watchlist(data: WatchlistCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def create_watchlist(
+    data: WatchlistCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new watchlist for the authenticated user."""
     watchlist = Watchlist(name=data.name, user_id=user.id)
     db.add(watchlist)
     await db.commit()
     await db.refresh(watchlist)
+
+    # Re-fetch with items eagerly loaded so WatchlistResponse.symbols populates correctly
     result = await db.execute(
-        select(Watchlist).where(Watchlist.id == watchlist.id).options(selectinload(Watchlist.items))
+        select(Watchlist)
+        .where(Watchlist.id == watchlist.id)
+        .options(selectinload(Watchlist.items))
     )
     return WatchlistResponse.model_validate(result.scalar_one())
 
 @router.get("", response_model=list[WatchlistResponse])
-async def get_watchlists(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_watchlists(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Return all watchlists belonging to the authenticated user."""
     result = await db.execute(
-        select(Watchlist).where(Watchlist.user_id == user.id).options(selectinload(Watchlist.items))
+        select(Watchlist)
+        .where(Watchlist.user_id == user.id)
+        .options(selectinload(Watchlist.items))
     )
     return [WatchlistResponse.model_validate(wl) for wl in result.scalars().all()]
 
 @router.post("/{id}/stocks", status_code=status.HTTP_201_CREATED)
-async def add_stock(id: int, data: AppendWatchlist, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    watchlist = (await db.execute(select(Watchlist).where(Watchlist.id == id, Watchlist.user_id == user.id))).scalar_one_or_none()
+async def add_stock(
+    id: int,
+    data: AppendWatchlist,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Add a stock symbol to an existing watchlist owned by the authenticated user."""
+    result = await db.execute(
+        select(Watchlist).where(Watchlist.id == id, Watchlist.user_id == user.id)
+    )
+    watchlist = result.scalar_one_or_none()
+
     if not watchlist:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Watchlist not found"
+        )
 
-    existing = (await db.execute(
-        select(WatchlistItem).where(WatchlistItem.watchlist_id == id, WatchlistItem.symbol == data.symbol.upper())
-    )).scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"{data.symbol.upper()} is already in this watchlist")
+    # Guard against duplicate symbols (db constraint will also catch this, but give a clean error)
+    existing = await db.execute(
+        select(WatchlistItem).where(
+            WatchlistItem.watchlist_id == id,
+            WatchlistItem.symbol == data.symbol.upper()
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{data.symbol.upper()} is already in this watchlist"
+        )
 
-    db.add(WatchlistItem(watchlist_id=id, symbol=data.symbol.upper()))
+    item = WatchlistItem(watchlist_id=id, symbol=data.symbol.upper())
+    db.add(item)
     await db.commit()
+
     return {"detail": f"{data.symbol.upper()} added to watchlist '{watchlist.name}'"}
 
 @router.delete("/{id}/stocks/{symbol}", status_code=status.HTTP_200_OK)
-async def remove_stock(id: int, symbol: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    watchlist = (await db.execute(select(Watchlist).where(Watchlist.id == id, Watchlist.user_id == user.id))).scalar_one_or_none()
+async def remove_stock(
+    id: int,
+    symbol: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Remove a stock symbol from a watchlist owned by the authenticated user."""
+    # Verify the watchlist belongs to this user
+    result = await db.execute(
+        select(Watchlist).where(Watchlist.id == id, Watchlist.user_id == user.id)
+    )
+    watchlist = result.scalar_one_or_none()
+
     if not watchlist:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Watchlist not found"
+        )
 
     item = (await db.execute(
         select(WatchlistItem).where(WatchlistItem.watchlist_id == id, WatchlistItem.symbol == symbol.upper())
@@ -480,6 +598,45 @@ async def remove_stock(id: int, symbol: str, user: User = Depends(get_current_us
     await db.delete(item)
     await db.commit()
     return {"detail": f"{symbol.upper()} removed from watchlist '{watchlist.name}'"}
+
+**`app/api/historical_data.py`**
+```python
+from fastapi import APIRouter, HTTPException, status
+from datetime import date as Date
+from typing import List, Dict
+import app.core.cassandra
+
+router = APIRouter(prefix = '/api/v1/historical_data')
+
+@router.get("/stocks/{symbol}/history")
+async def history(
+    date: Date,
+    symbol: str
+) -> List[Dict]:
+    """
+    Fetch historical tick data from Cassandra for a specific symbol and date.
+    """
+    if app.core.cassandra.session is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cassandra session not initialized"
+        )
+    
+    # Note: date is converted to string for the CQL query as the schema uses 'text' for date
+    data = app.core.cassandra.session.execute(
+        "SELECT * FROM tick_data WHERE symbol = %s AND date = %s",
+        (symbol, str(date))
+    )
+    
+    # Convert Cassandra row objects to dictionaries for JSON serialization
+    results = [dict(row._asdict()) for row in data]
+    if not results:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"No historical data found for {symbol} on {date}"
+        )
+    return results
+```
 ```
 
 **`compose.yml`**
@@ -496,7 +653,7 @@ services:
       - pgdata:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 50
 
@@ -506,19 +663,19 @@ services:
       - "6379:6379"
     healthcheck:
       test: ['CMD-SHELL', 'redis-cli ping']
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 50
 
-  cassandra:
+  my_cassandra:
     image: cassandra
     ports:
       - "9042:9042"
     volumes:
-      - cassandra_data:/var/lib/cassandra
+      - cassandra:/var/lib/cassandra
     healthcheck:
       test: ['CMD-SHELL', 'nodetool status']
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 50
 
@@ -535,13 +692,13 @@ services:
     depends_on:
       my_postgres:
         condition: service_healthy
-      cassandra:
+      my_cassandra:
         condition: service_healthy
       my_redis:
         condition: service_healthy
     healthcheck:
       test: ['CMD-SHELL', 'curl -f http://localhost:8000/health']
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 50
 
@@ -557,7 +714,7 @@ services:
 
 volumes:
   pgdata:
-  cassandra_data:
+  cassandra:
 ```
 
 **`nginx.conf`**
@@ -690,17 +847,17 @@ Learned through reasoning, not memorization:
 - [x] Write README with ASCII architecture diagram
 - [x] Full `docker compose down -v && docker compose up --build` from scratch — verify clean boot
 
-### Day 8 — Cassandra Introduction
+### Day 8 ✅ — Cassandra Introduction
 - [x] Add Cassandra to compose
-- [/] Understand keyspaces, tables, partitions
-- [ ] Connect from Python using `cassandra-driver`
-- [ ] Create `tick_data` table: `PRIMARY KEY ((symbol, date), ts)`
+- [x] Understand keyspaces, tables, partitions
+- [x] Connect from Python using `cassandra-driver`
+- [x] Create `tick_data` table: `PRIMARY KEY ((symbol, date), ts)`
 - [ ] Insert and query dummy tick rows
 
-### Day 9 — Cassandra + FastAPI Integration
-- `GET /stocks/{symbol}/history?date=2026-03-25`
-- Query Cassandra for tick data by symbol + date
-- Handle "no data found" gracefully
+### Day 9 — Cassandra + FastAPI Integration [/]
+- [/] `GET /stocks/{symbol}/history?date=2026-03-25`
+- [/] Query Cassandra for tick data by symbol + date
+- [/] Handle "no data found" gracefully
 
 ### Day 10 — Kafka Introduction
 - Add Kafka to compose

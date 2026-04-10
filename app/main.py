@@ -6,6 +6,7 @@ from app.core.cassandra import connect_cassandra, close_cassandra
 from contextlib import asynccontextmanager
 from app.api.register import router as auth_router
 from app.api.watchlists import router as watchlists_router
+from app.api.historical_data import router as historical_data_router
 
 
 @asynccontextmanager
@@ -19,6 +20,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(auth_router)
 app.include_router(watchlists_router)
+app.include_router(historical_data_router)
 
 
 @app.get("/health", status_code=status.HTTP_200_OK)
