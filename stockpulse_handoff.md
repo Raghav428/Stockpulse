@@ -938,9 +938,9 @@
 
     ### Dependencies (`pyproject.toml`):
     ```
-    alembic, argon2-cffi, asyncpg, cryptography, dotenv, fastapi, numpy, pandas,
-    psycopg2-binary, pydantic-settings, pydantic[email], pyjwt, python-dotenv,
-    python-multipart, sqlalchemy, starlette, structlog, uvicorn
+    alembic, argon2-cffi, asyncpg, cassandra-driver, cryptography, dotenv, fastapi, 
+    kafka-python-ng, numpy, pandas, psycopg2-binary, pydantic-settings, pydantic[email], 
+    pyjwt, python-dotenv, python-multipart, sqlalchemy, starlette, structlog, uvicorn
     ```
 
     ---
@@ -1024,7 +1024,7 @@
     - [x] Add nginx container to compose
     - [x] Write `nginx.conf` — reverse proxy to FastAPI
     - [x] Understand `location` blocks, `proxy_pass`, `upstream`
-    - [x] All traffic flows through nginx, not directly to FastAPI
+    - [x] All traffic flows through nginx (FastAPI port 8000 remains exposed for direct access/debugging)
     - [x] Test all existing endpoints work through nginx
 
     ### Day 7 ✅ — Review + Git + README
@@ -1044,17 +1044,17 @@
     - [x] Query Cassandra for tick data by symbol + date
     - [x] Handle "no data found" gracefully
 
-    ### Day 10  — Kafka Introduction
+    ### Day 10  — Kafka Introduction ✅
     - [x] Add Kafka to compose
     - [x] Understand topics, partitions, producers, consumers, consumer groups
-    - [] Write a minimal producer and consumer in Python
-    - [] Verify end-to-end message flow
+    - [x] Write a minimal producer and consumer in Python
+    - [x] Verify end-to-end message flow
 
-    ### Day 11 — Ingestion Service [/]
-    - [/] Build `ingestion/` as a separate Python service
-    - Fetch real tick data from `yfinance`
-    - Publish each tick as JSON to Kafka topic `ticks`
-    - Containerize and add to compose
+    ### Day 11 — Ingestion Service
+    - [] Build `ingestion/` as a separate Python service
+    - [] Fetch real tick data from `yfinance`
+    - [] Publish each tick as JSON to Kafka topic `ticks`
+    - [] Containerize and add to compose
 
     ### Day 12 — Consumer Service
     - Build `consumer/` as a separate Python service
