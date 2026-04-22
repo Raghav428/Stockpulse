@@ -71,6 +71,14 @@ services:
       timeout: 5s
       retries: 50
 
+  ingestion:
+    build:
+      context: ./ingestion
+      dockerfile: Dockerfile
+    depends_on:
+      kafka:
+        condition: service_healthy
+
 
 #>>>>>>>>>>>nginx<<<<<<<<<<<<<<#
   nginx:

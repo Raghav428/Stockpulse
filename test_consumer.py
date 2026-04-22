@@ -11,4 +11,4 @@ consumer = KafkaConsumer(
 
 print("Listening for messages...")
 for message in consumer:
-    print(f"Received: {message.value}")
+    print(f"Received: {message}")

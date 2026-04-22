@@ -34,4 +34,4 @@ To spin up the development environment, review the `setup_manual.txt` for Docker
 - Check logs: `docker compose logs -f fastapi`
 - Stop and reset: `docker compose down -v`
 
-For deeper understanding of the codebase and project structure, please see `project_overview.txt` and `stockpulse_handoff.md`.
+For deeper understanding of the codebase and project structure, please see `stockpulse_handoff.md`.

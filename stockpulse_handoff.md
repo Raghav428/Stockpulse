@@ -45,13 +45,13 @@
         → Cassandra (historical tick data)
         → PostgreSQL (users, watchlists, alerts)
 
-    Ingestion & AI Pipeline (Event-Driven):
-    External API (Yahoo/NSE/BSE)
-        → Ingestion Service
-        → Kafka (`ticks` topic)
-            ├── Consumer Service (writes to Redis + Cassandra)
-            ├── AI Prediction Service (reads `ticks`, infers future price, writes to `predictions` topic)
-            └── AI Narrative Service (reads `ticks` + `predictions`, generates summary, writes to Redis)
+    Ingestion & AI Pipeline (Design Intent — 🏗️ Partially Implemented):
+    External API (Binance WebSocket — *Current Implementation*)
+        → Ingestion Service (🏗️ Active)
+        → Kafka (`ticks` topic — 🏗️ Active)
+            ├── Consumer Service (⏳ PLANNED — writes to Redis + Cassandra)
+            ├── AI Prediction Service (⏳ PLANNED — reads `ticks`, infers future price)
+            └── AI Narrative Service (⏳ PLANNED — generates summary)
     ```
 
     ### Key architectural decisions made:
@@ -80,41 +80,42 @@
     ├── .vscode/
     │   └── settings.json
     ├── .env.example
-    ├── nginx.conf
+    ├── nginx.conf                  # Basic reverse proxy configuration
+    ├── ingestion/                  # Ingestion Service (Binance WebSocket)
+    │   ├── ingestion.py            # Kafka producer logic
+    │   ├── Dockerfile              # uv-based container build
+    │   └── pyproject.toml          # Service-specific dependencies
     ├── app/
     │   ├── __init__.py
-    │   ├── main.py                     # FastAPI entry point (lifespan, routers)
+    │   ├── main.py                 # FastAPI entry point (lifespan, routers)
     │   ├── api/
-    │   │   ├── register.py             # Auth endpoints (register, login, users/me, users/{id})
-    │   │   └── watchlists.py           # Watchlist CRUD endpoints
+    │   │   ├── register.py         # Auth endpoints
+    │   │   ├── watchlists.py       # Watchlist CRUD
+    │   │   └── historical_data.py  # Cassandra fetch logic
     │   ├── core/
-    │   │   ├── auth.py                 # get_current_user dependency (OAuth2 + JWT decode)
-    │   │   ├── crypto.py               # Argon2 hashing + PyJWT token create/decode
-    │   │   └── postgresql.py           # Async engine, session factory, Base, URLs, get_db
-    │   ├── crud/                       # Empty — future DB query functions
+    │   │   ├── auth.py             # get_current_user dependency
+    │   │   ├── crypto.py           # Argon2 + JWT logic
+    │   │   ├── postgresql.py       # Async PG engine/session
+    │   │   └── cassandra.py        # Cassandra cluster/session
+    │   ├── crud/                   # Empty — future DB query functions
     │   ├── models/
-    │   │   └── models.py               # SQLAlchemy: User, Watchlist, WatchlistItem
+    │   │   └── models.py           # SQLAlchemy models
     │   └── schemas/
-    │       └── schema.py               # Pydantic: Stock, UserCreate, UserResponse, UserLogin,
-    │                                   #           WatchlistCreate, AppendWatchlist, WatchlistResponse
+    │       └── schema.py           # Pydantic schemas
     ├── migrations/
     │   ├── env.py
     │   └── versions/
-    │       ├── d6f77d76792d_create_users_table.py
-    │       ├── fd2b8035fbf9_add_hashed_password.py
-    │       ├── 954652c52dec_enhanced_user_details.py
-    │       ├── 4c7e3028161a_updated_database.py
-    │       └── c1ab01ca91e9_watchlist_tables.py
-    ├── Dockerfile
-    ├── compose.yml
-    ├── start.sh
+    │       └── ...                 # Migration history (5 files)
+    ├── Dockerfile                  # Main FastAPI Dockerfile
+    ├── compose.yml                 # Full stack orchestration
+    ├── start.sh                    # Container entrypoint
     ├── alembic.ini
     ├── pyproject.toml
     ├── uv.lock
     ├── README.md
     ├── setup_manual.txt
-    ├── test_producer.py              # Kafka test producer
-    └── test_consumer.py              # Kafka test consumer
+    ├── test_producer.py            # Kafka test producer (OHLCV format)
+    └── test_consumer.py            # Kafka test consumer (Print-only)
     ```
 
     ### What is fully working:
@@ -140,14 +141,22 @@
     - Volume persistence — `pgdata` (Postgres) and `cassandra_data` (Cassandra) survive container restarts
     - Bind mount with `.venv` exclusion — local code changes reflect in container without rebuilds
     - **Kafka local infrastructure** — Broker up and healthy in Compose
+    - **Ingestion Service** — Working Binance WebSocket integration publishing to Kafka topic `ticks`
     - **Kafka connectivity verified** — `test_producer.py` and `test_consumer.py` flow working locally
-    - **Historical data endpoints** — `GET /api/v1/historical_data/stocks/{symbol}/history` fetching from Cassandra successfully
+    - **Historical data endpoints** — `GET /api/v1/historical_data/stocks/{symbol}/history` fetching from Cassandra
+    - **nginx Reverse Proxy** — Basic routing to FastAPI functional
+    - **Redis Infrastructure** — Service up and healthy (awaiting code integration)
     - **Dockerfile refinements** — `curl` installed for healthchecks
 
     ### ⚠️ Known issues / pending:
+    - **Schema Mismatch:** `ingestion.py` produces raw trade data (`price`/`quantity`), but Cassandra and `test_producer.py` expect OHLCV format.
+    - **Redis Wiring:** Redis is running but no application logic (Consumer or FastAPI) uses it yet.
+    - **Documentation:** `README.md` refers to `project_overview.txt`, which is missing from the repo.
+    - **Workspace Meta:** Root `pyproject.toml` has a duplicate `ingestion` member.
+    - **Nginx:** Basic proxy only; lacks SSL and load balancing described in architecture.
     - `pydantic-settings` and `structlog` installed but not yet wired in
-    - Login returns `{"token": ..., "token_type": "bearer"}` — note the key is `token` not `access_token`. Non-standard but functional. Consider aligning with OAuth2 spec (`access_token`) later.
-    - `selectinload` vs JOIN — learner understands what selectinload does but hasn't fully articulated why it's better than a JOIN for N+1 scenarios. Pending discussion.
+    - Login returns `{"token": ..., "token_type": "bearer"}` — note the key is `token` not `access_token`. Consider aligning with OAuth2 spec later.
+    - `selectinload` vs JOIN — learner needs to articulate the N+1 reasoning more clearly.
 
     ---
 
@@ -800,11 +809,20 @@
             condition: service_healthy
         my_redis:
             condition: service_healthy
-        healthcheck:
-        test: ['CMD-SHELL', 'curl -f http://localhost:8000/health']
-        interval: 10s
-        timeout: 5s
         retries: 50
+        healthcheck:
+          test: ['CMD-SHELL', 'curl -f http://localhost:8000/health']
+          interval: 10s
+          timeout: 5s
+          retries: 50
+
+    ingestion:
+        build:
+            context: ./ingestion
+            dockerfile: Dockerfile
+        depends_on:
+            kafka:
+                condition: service_healthy
 
     nginx:
         image: nginx
@@ -855,6 +873,32 @@
         }
     }
     }
+    ```
+
+    **`ingestion/ingestion.py`**
+    ```python
+    from kafka import KafkaProducer
+    import json
+    import websocket
+
+    symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    streams = ('@trade/'.join(symbols) + '@trade').lower()
+    url = f"wss://stream.binance.com:9443/stream?streams={streams}"
+
+    producer = KafkaProducer(
+        bootstrap_servers='kafka:9092',
+        value_serializer=lambda v: json.dumps(v).encode('utf-8')
+    )
+
+    def on_message(ws, message):
+        data = json.loads(message)
+        # Note: Producing raw price/quantity, creates schema drift with Cassandra OHLCV
+        symbol, price, quantity, timestamp = data['data']['s'],data['data']['p'],data['data']['q'],data['data']['T']
+        tick_data = {'symbol':symbol, 'price':price,'quantity':quantity,'timestamp':timestamp}
+        producer.send('ticks',tick_data)
+
+    ws = websocket.WebSocketApp(url,on_message=on_message)
+    ws.run_forever()
     ```
 
     **`.env.example`**
@@ -933,14 +977,15 @@
 
     print("Listening for messages...")
     for message in consumer:
-        print(f"Received: {message.value}")
+        print(f"Received: {message}")
     ```
 
     ### Dependencies (`pyproject.toml`):
     ```
     alembic, argon2-cffi, asyncpg, cassandra-driver, cryptography, dotenv, fastapi, 
     kafka-python-ng, numpy, pandas, psycopg2-binary, pydantic-settings, pydantic[email], 
-    pyjwt, python-dotenv, python-multipart, sqlalchemy, starlette, structlog, uvicorn
+    pyjwt, python-dotenv, python-multipart, sqlalchemy, starlette, structlog, uvicorn,
+    websocket-client
     ```
 
     ---
@@ -1051,10 +1096,10 @@
     - [x] Verify end-to-end message flow
 
     ### Day 11 — Ingestion Service
-    - [] Build `ingestion/` as a separate Python service
-    - [] Fetch real tick data from `yfinance`
-    - [] Publish each tick as JSON to Kafka topic `ticks`
-    - [] Containerize and add to compose
+    -  Build `ingestion/` as a separate Python service
+    -  Fetch real trade data from Binance WebSocket (Crypto)
+    -  Publish each trade as JSON to Kafka topic `ticks`
+    -  Containerize and add to compose
 
     ### Day 12 — Consumer Service
     - Build `consumer/` as a separate Python service
