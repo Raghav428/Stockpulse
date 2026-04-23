@@ -5,6 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "kafka-python-ng>=2.2.3",
+    "kafka-python>=2.3.1",
     "websocket-client>=1.9.0",
 ]

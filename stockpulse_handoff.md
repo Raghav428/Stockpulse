@@ -141,7 +141,6 @@
     - Volume persistence — `pgdata` (Postgres) and `cassandra_data` (Cassandra) survive container restarts
     - Bind mount with `.venv` exclusion — local code changes reflect in container without rebuilds
     - **Kafka local infrastructure** — Broker up and healthy in Compose
-    - **Ingestion Service** — Working Binance WebSocket integration publishing to Kafka topic `ticks`
     - **Kafka connectivity verified** — `test_producer.py` and `test_consumer.py` flow working locally
     - **Historical data endpoints** — `GET /api/v1/historical_data/stocks/{symbol}/history` fetching from Cassandra
     - **nginx Reverse Proxy** — Basic routing to FastAPI functional
@@ -149,10 +148,7 @@
     - **Dockerfile refinements** — `curl` installed for healthchecks
 
     ### ⚠️ Known issues / pending:
-    - **Schema Mismatch:** `ingestion.py` produces raw trade data (`price`/`quantity`), but Cassandra and `test_producer.py` expect OHLCV format.
     - **Redis Wiring:** Redis is running but no application logic (Consumer or FastAPI) uses it yet.
-    - **Documentation:** `README.md` refers to `project_overview.txt`, which is missing from the repo.
-    - **Workspace Meta:** Root `pyproject.toml` has a duplicate `ingestion` member.
     - **Nginx:** Basic proxy only; lacks SSL and load balancing described in architecture.
     - `pydantic-settings` and `structlog` installed but not yet wired in
     - Login returns `{"token": ..., "token_type": "bearer"}` — note the key is `token` not `access_token`. Consider aligning with OAuth2 spec later.
@@ -1096,10 +1092,10 @@
     - [x] Verify end-to-end message flow
 
     ### Day 11 — Ingestion Service
-    -  Build `ingestion/` as a separate Python service
-    -  Fetch real trade data from Binance WebSocket (Crypto)
-    -  Publish each trade as JSON to Kafka topic `ticks`
-    -  Containerize and add to compose
+    - [ ] Build `ingestion/` as a separate Python service
+    - [ ] Fetch real trade data from Binance WebSocket (Crypto)
+    - [ ] Publish each trade as JSON to Kafka topic `ticks`
+    - [ ] Containerize and add to compose
 
     ### Day 12 — Consumer Service
     - Build `consumer/` as a separate Python service
