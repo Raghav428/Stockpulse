@@ -7,7 +7,7 @@ streams = ('@kline_1m/'.join(symbols) + '@kline_1m').lower()
 url = f"wss://stream.binance.com:9443/stream?streams={streams}"
 
 producer = KafkaProducer(
-    bootstrap_servers='kafka:29092',
+    bootstrap_servers='my_kafka:29092',
     value_serializer=lambda v: json.dumps(v).encode('utf-8')
 )
 

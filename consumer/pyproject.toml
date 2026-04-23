@@ -1,0 +1,11 @@
+[project]
+name = "consumer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cassandra-driver>=3.29.3",
+    "kafka-python>=2.3.1",
+    "redis>=7.4.0",
+]
