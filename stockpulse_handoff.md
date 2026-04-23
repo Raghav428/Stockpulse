@@ -1,5 +1,5 @@
-    # StockPulse AI — Project Handoff Document v5
-    **Last Updated:** April 10, 2026
+    # StockPulse AI — Project Handoff Document 
+    **Last Updated:** April 23, 2026
     **Purpose:** Complete context for any engineer, mentor, or LLM continuing this project
 
     ---
@@ -45,10 +45,10 @@
         → Cassandra (historical tick data)
         → PostgreSQL (users, watchlists, alerts)
 
-    Ingestion & AI Pipeline (Design Intent — 🏗️ Partially Implemented):
+    Ingestion & AI Pipeline (Design Intent):
     External API (Binance WebSocket — *Current Implementation*)
-        → Ingestion Service (🏗️ Active)
-        → Kafka (`ticks` topic — 🏗️ Active)
+        → Ingestion Service (✅ Active)
+        → Kafka (`ticks` topic — ✅ Active)
             ├── Consumer Service (⏳ PLANNED — writes to Redis + Cassandra)
             ├── AI Prediction Service (⏳ PLANNED — reads `ticks`, infers future price)
             └── AI Narrative Service (⏳ PLANNED — generates summary)
@@ -145,7 +145,8 @@
     - **Historical data endpoints** — `GET /api/v1/historical_data/stocks/{symbol}/history` fetching from Cassandra
     - **nginx Reverse Proxy** — Basic routing to FastAPI functional
     - **Redis Infrastructure** — Service up and healthy (awaiting code integration)
-    - **Dockerfile refinements** — `curl` installed for healthchecks
+    - **Ingestion Service** — Fully operational, containerized, and producing OHLCV data to Kafka
+    - **Dockerfile refinements** — `curl` installed for healthchecks, Ingestion moved to `alpine` image
 
     ### ⚠️ Known issues / pending:
     - **Redis Wiring:** Redis is running but no application logic (Consumer or FastAPI) uses it yet.
@@ -878,22 +879,31 @@
     import websocket
 
     symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-    streams = ('@trade/'.join(symbols) + '@trade').lower()
+    streams = ('@kline_1m/'.join(symbols) + '@kline_1m').lower()
     url = f"wss://stream.binance.com:9443/stream?streams={streams}"
 
     producer = KafkaProducer(
-        bootstrap_servers='kafka:9092',
+        bootstrap_servers='kafka:29092',
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
 
     def on_message(ws, message):
         data = json.loads(message)
-        # Note: Producing raw price/quantity, creates schema drift with Cassandra OHLCV
-        symbol, price, quantity, timestamp = data['data']['s'],data['data']['p'],data['data']['q'],data['data']['T']
-        tick_data = {'symbol':symbol, 'price':price,'quantity':quantity,'timestamp':timestamp}
-        producer.send('ticks',tick_data)
+        kline = data['data']['k']
+        
+        tick_data = {
+            'symbol': kline['s'],
+            'open': float(kline['o']),
+            'high': float(kline['h']),
+            'low': float(kline['l']),
+            'close': float(kline['c']),
+            'volume': int(float(kline['v'])), 
+            'timestamp': kline['t'] / 1000.0 
+        }
+        
+        producer.send('ticks', tick_data)
 
-    ws = websocket.WebSocketApp(url,on_message=on_message)
+    ws = websocket.WebSocketApp(url, on_message=on_message)
     ws.run_forever()
     ```
 
@@ -1091,11 +1101,11 @@
     - [x] Write a minimal producer and consumer in Python
     - [x] Verify end-to-end message flow
 
-    ### Day 11 — Ingestion Service
-    - [ ] Build `ingestion/` as a separate Python service
-    - [ ] Fetch real trade data from Binance WebSocket (Crypto)
-    - [ ] Publish each trade as JSON to Kafka topic `ticks`
-    - [ ] Containerize and add to compose
+    ### Day 11 ✅ — Ingestion Service
+    - [x] Build `ingestion/` as a separate Python service
+    - [x] Fetch real trade data from Binance WebSocket (Crypto)
+    - [x] Publish each trade as JSON to Kafka topic `ticks` (OHLCV format)
+    - [x] Containerize and add to compose (using Alpine image)
 
     ### Day 12 — Consumer Service
     - Build `consumer/` as a separate Python service
