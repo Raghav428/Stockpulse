@@ -44,11 +44,12 @@ consumer = KafkaConsumer(
 )
 
 for message in consumer:
+    dt = datetime.datetime.fromtimestamp(message.value["timestamp"])
     session.execute("""
         INSERT INTO stockpulse.tick_data (symbol, date, ts, open, high, low, close, volume) 
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     """, (
-        message.value["symbol"], datetime.datetime.fromtimestamp(message.value["timestamp"]).date(), message.value["timestamp"], 
+        message.value["symbol"], str(dt.date()), dt, 
         message.value["open"], message.value["high"], message.value["low"], 
         message.value["close"], message.value["volume"]))
     redis_client.set(message.value["symbol"], json.dumps(message.value))

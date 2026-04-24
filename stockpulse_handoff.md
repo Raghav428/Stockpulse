@@ -1,5 +1,5 @@
     # StockPulse AI — Project Handoff Document 
-    **Last Updated:** April 23, 2026
+    **Last Updated:** April 24, 2026
     **Purpose:** Complete context for any engineer, mentor, or LLM continuing this project
 
     ---
@@ -46,10 +46,10 @@
         → PostgreSQL (users, watchlists, alerts)
 
     Ingestion & AI Pipeline (Design Intent):
-    External API (Binance WebSocket — *Current Implementation*)
+    External API (Binance WebSocket — *Kline/OHLCV data*)
         → Ingestion Service (✅ Active)
         → Kafka (`ticks` topic — ✅ Active)
-            ├── Consumer Service (⏳ PLANNED — writes to Redis + Cassandra)
+            ├── Consumer Service (✅ Active — writes to Redis + Cassandra)
             ├── AI Prediction Service (⏳ PLANNED — reads `ticks`, infers future price)
             └── AI Narrative Service (⏳ PLANNED — generates summary)
     ```
@@ -84,6 +84,10 @@
     ├── ingestion/                  # Ingestion Service (Binance WebSocket)
     │   ├── ingestion.py            # Kafka producer logic
     │   ├── Dockerfile              # uv-based container build
+    │   └── pyproject.toml          # Service-specific dependencies
+    ├── consumer/                   # Consumer Service (Kafka → DBs)
+    │   ├── consumer.py             # Kafka consumer logic (Cassandra + Redis)
+    │   ├── Dockerfile              # Service build
     │   └── pyproject.toml          # Service-specific dependencies
     ├── app/
     │   ├── __init__.py
@@ -144,12 +148,13 @@
     - **Kafka connectivity verified** — `test_producer.py` and `test_consumer.py` flow working locally
     - **Historical data endpoints** — `GET /api/v1/historical_data/stocks/{symbol}/history` fetching from Cassandra
     - **nginx Reverse Proxy** — Basic routing to FastAPI functional
-    - **Redis Infrastructure** — Service up and healthy (awaiting code integration)
+    - **Redis Integration** — Consumer service actively caches live market data in Redis
+    - **Consumer Service** — Fully operational, containerized, bridging Kafka to Cassandra/Redis
     - **Ingestion Service** — Fully operational, containerized, and producing OHLCV data to Kafka
-    - **Dockerfile refinements** — `curl` installed for healthchecks, Ingestion moved to `alpine` image
+    - **Dockerfile refinements** — `curl` installed for healthchecks, Ingestion/Consumer services containerized
 
     ### ⚠️ Known issues / pending:
-    - **Redis Wiring:** Redis is running but no application logic (Consumer or FastAPI) uses it yet.
+    - **Redis Usage in FastAPI:** Redis is populated by the consumer, but the FastAPI app doesn't read from it yet.
     - **Nginx:** Basic proxy only; lacks SSL and load balancing described in architecture.
     - `pydantic-settings` and `structlog` installed but not yet wired in
     - Login returns `{"token": ..., "token_type": "bearer"}` — note the key is `token` not `access_token`. Consider aligning with OAuth2 spec later.
@@ -831,7 +836,7 @@
         fastapi:
             condition: service_healthy
 
-    kafka:
+    my_kafka:
         image: confluentinc/cp-kafka:7.5.0
         ports:
         - "9092:9092"
@@ -839,9 +844,9 @@
         KAFKA_NODE_ID: 1
         KAFKA_PROCESS_ROLES: broker,controller
         KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092
-        KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+        KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://my_kafka:29092,PLAINTEXT_HOST://localhost:9092
         KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-        KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+        KAFKA_CONTROLLER_QUORUM_VOTERS: 1@my_kafka:29093
         KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
         KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
         KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -883,7 +888,7 @@
     url = f"wss://stream.binance.com:9443/stream?streams={streams}"
 
     producer = KafkaProducer(
-        bootstrap_servers='kafka:29092',
+        bootstrap_servers='my_kafka:29092',
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
 
@@ -905,6 +910,69 @@
 
     ws = websocket.WebSocketApp(url, on_message=on_message)
     ws.run_forever()
+    ```
+
+    **`consumer/consumer.py`**
+    ```python
+    from kafka import KafkaConsumer
+    import redis
+    from cassandra.cluster import Cluster
+    import datetime
+    import json
+
+
+    cluster = None
+    session = None
+
+    def connect_cassandra():
+        global cluster, session
+        cluster = Cluster(["my_cassandra"])
+        session = cluster.connect()
+
+        session.execute("""
+    CREATE KEYSPACE IF NOT EXISTS stockpulse
+    WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}
+    """)
+        session.set_keyspace("stockpulse")
+
+        session.execute("""
+        CREATE TABLE IF NOT EXISTS tick_data(
+            symbol text,
+            date text,
+            ts timestamp,
+            open double,
+            high double,
+            low double,
+            close double,
+            volume int,
+            PRIMARY KEY ((symbol, date), ts)
+        )""")
+
+    connect_cassandra()
+
+    redis_client = redis.Redis(host='my_redis', port=6379)
+    consumer = KafkaConsumer(
+        'ticks',
+        bootstrap_servers='my_kafka:29092',
+        value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+        auto_offset_reset='earliest',
+        group_id='debug-group'
+    )
+
+    for message in consumer:
+        # Extract date from timestamp for Cassandra partition key
+        dt = datetime.datetime.fromtimestamp(message.value["timestamp"])
+        
+        session.execute("""
+            INSERT INTO stockpulse.tick_data (symbol, date, ts, open, high, low, close, volume) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            message.value["symbol"], str(dt.date()), dt, 
+            message.value["open"], message.value["high"], message.value["low"], 
+            message.value["close"], message.value["volume"]))
+        
+        # Cache latest price in Redis
+        redis_client.set(message.value["symbol"], json.dumps(message.value))
     ```
 
     **`.env.example`**
@@ -1107,12 +1175,12 @@
     - [x] Publish each trade as JSON to Kafka topic `ticks` (OHLCV format)
     - [x] Containerize and add to compose (using Alpine image)
 
-    ### Day 12 — Consumer Service
-    - Build `consumer/` as a separate Python service
-    - Read from Kafka `ticks` topic
-    - Write to Redis (key: `tick:{symbol}`, value: latest price)
-    - Write to Cassandra (persistent storage)
-    - Containerize and add to compose
+    ### Day 12 ✅ — Consumer Service
+    - [x] Build `consumer/` as a separate Python service
+    - [x] Read from Kafka `ticks` topic
+    - [x] Write to Redis (key: `symbol`, value: latest price)
+    - [x] Write to Cassandra (persistent storage)
+    - [x] Containerize and add to compose
 
     ### Day 13 — FastAPI Live Data Endpoint
     - `GET /stocks/{symbol}/live` — reads from Redis
