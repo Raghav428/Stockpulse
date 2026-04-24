@@ -31,4 +31,5 @@ dependencies = [
 [tool.uv.workspace]
 members = [
     "ingestion",
+    "consumer",
 ]
